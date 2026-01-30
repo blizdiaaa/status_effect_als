@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StatusEffect, EditorMode } from '../types';
-import { X, Save, Image as ImageIcon, Info } from 'lucide-react';
+import { X, Save, Upload, Trash2, Info } from 'lucide-react';
 
 interface EditorModalProps {
   isOpen: boolean;
@@ -17,6 +17,7 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
     description: '',
     imageUrl: '',
   });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (initialData) {
@@ -28,17 +29,25 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
 
   if (!isOpen) return null;
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 1024 * 1024) { // 1MB Limit for LocalStorage health
+        alert("Image too large! Please select an image under 1MB.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData(prev => ({ ...prev, imageUrl: reader.result as string }));
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.description) return;
-    
-    // Auto-generate path if empty
-    const finalData = { ...formData };
-    if (!finalData.imageUrl) {
-      finalData.imageUrl = `images/icons/${formData.name.toLowerCase().replace(/\s+/g, '_')}.png`;
-    }
-
-    onSave(finalData);
+    onSave(formData);
     onClose();
   };
 
@@ -50,10 +59,10 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
         <div className="flex items-center justify-between p-6 border-b border-slate-800 bg-slate-900/50">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-rose-600/10 rounded-lg text-rose-500">
-              <ImageIcon size={20} />
+              <Upload size={20} />
             </div>
             <h2 className="heading-font text-lg font-bold uppercase tracking-widest text-white">
-              {mode === 'create' ? 'Central Data Entry' : 'Entry Calibration'}
+              {mode === 'create' ? 'Create New Entry' : 'Modify Status Entry'}
             </h2>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
@@ -75,24 +84,43 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
           </div>
 
           <div className="space-y-2">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Asset Reference (Local Path or URL)</label>
-            <div className="flex gap-2">
-               <input 
-                value={formData.imageUrl}
-                onChange={e => setFormData(prev => ({ ...prev, imageUrl: e.target.value }))}
-                className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-5 py-3 text-rose-400 focus:outline-none focus:border-rose-500 transition-all font-mono text-xs"
-                placeholder="images/icons/filename.png"
-              />
-              <button 
-                type="button"
-                onClick={() => setFormData(prev => ({ ...prev, imageUrl: `images/icons/${formData.name.toLowerCase().replace(/\s+/g, '_')}.png` }))}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-400 text-[10px] font-bold px-3 rounded-xl uppercase transition-colors"
-              >
-                Auto-Link
-              </button>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Asset Management</label>
+            <div className="flex items-center gap-4 p-4 bg-slate-950 border border-slate-800 rounded-xl">
+              <div className="w-20 h-20 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center overflow-hidden shrink-0">
+                {formData.imageUrl ? (
+                  <img src={formData.imageUrl} className="w-full h-full object-contain" alt="Preview" />
+                ) : (
+                  <Upload size={24} className="text-slate-700" />
+                )}
+              </div>
+              <div className="flex-1 flex flex-col gap-2">
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileChange} 
+                  className="hidden" 
+                  accept="image/*" 
+                />
+                <button 
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-slate-800 hover:bg-rose-600 text-white text-[10px] font-bold py-2 px-4 rounded-lg uppercase transition-all flex items-center justify-center gap-2"
+                >
+                  <Upload size={14} /> Upload Icon
+                </button>
+                {formData.imageUrl && (
+                  <button 
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, imageUrl: '' }))}
+                    className="text-rose-500 hover:text-rose-400 text-[9px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors"
+                  >
+                    <Trash2 size={12} /> Remove Asset
+                  </button>
+                )}
+              </div>
             </div>
-            <p className="text-[9px] text-slate-600 flex items-center gap-1 italic">
-              <Info size={10} /> Leave blank to auto-generate from name on save.
+            <p className="text-[9px] text-slate-600 flex items-center gap-1 italic px-1">
+              <Info size={10} /> Supports PNG, JPG, GIF (Max 1MB).
             </p>
           </div>
 
@@ -114,13 +142,13 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
               onClick={onClose}
               className="flex-1 py-4 bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold uppercase tracking-widest text-[10px] rounded-xl transition-all"
             >
-              Abort
+              Cancel
             </button>
             <button 
               type="submit"
               className="flex-[2] py-4 bg-rose-600 hover:bg-rose-700 text-white font-bold uppercase tracking-widest text-[10px] rounded-xl transition-all shadow-lg shadow-rose-900/20 flex items-center justify-center gap-2"
             >
-              <Save size={14} /> Finalize Archives
+              <Save size={14} /> Save Archives
             </button>
           </div>
         </form>
