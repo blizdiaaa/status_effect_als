@@ -1,40 +1,78 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { StatusEffect, EditorMode, SortOption } from './types';
 import { INITIAL_STATUS_EFFECTS } from './constants';
 import StatusCard from './components/StatusCard';
 import EditorModal from './components/EditorModal';
 import AdminLoginModal from './components/AdminLoginModal';
-import { Search, Plus, ShieldCheck, ShieldAlert, Zap, Filter, LayoutGrid } from 'lucide-react';
+import { Search, Plus, ShieldCheck, ShieldAlert, Zap, Filter, LayoutGrid, Cloud, CloudUpload, RefreshCw } from 'lucide-react';
 
 const STORAGE_KEY = 'als_codex_database_v3';
 const ADMIN_PASS = 'ALS_ADMIN_2024';
+// Public Shared Bin ID for Global Sync (using npoint.io)
+// This is a shared endpoint. Multiple people can read/write if they have the ID.
+const CLOUD_SYNC_ID = '72338b093370321a423e'; 
+const CLOUD_API = `https://api.npoint.io/${CLOUD_SYNC_ID}`;
 
 const App: React.FC = () => {
   const [effects, setEffects] = useState<StatusEffect[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<number | null>(null);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>('create');
   const [currentEffect, setCurrentEffect] = useState<StatusEffect | undefined>();
 
-  // Database Persistence
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      setEffects(JSON.parse(saved));
-    } else {
-      setEffects(INITIAL_STATUS_EFFECTS);
+  // Cloud Sync Logic
+  const fetchGlobalData = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await fetch(CLOUD_API);
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setEffects(data);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+          setLastSynced(Date.now());
+        } else {
+          setEffects(INITIAL_STATUS_EFFECTS);
+        }
+      } else {
+        throw new Error('Cloud unreachable');
+      }
+    } catch (err) {
+      console.warn('Sync failed, falling back to local cache', err);
+      const saved = localStorage.getItem(STORAGE_KEY);
+      setEffects(saved ? JSON.parse(saved) : INITIAL_STATUS_EFFECTS);
+    } finally {
+      setIsSyncing(false);
     }
-  }, []);
+  };
+
+  const pushGlobalData = async (data: StatusEffect[]) => {
+    if (!isAdmin) return;
+    setIsSyncing(true);
+    try {
+      await fetch(CLOUD_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      setLastSynced(Date.now());
+    } catch (err) {
+      alert('Cloud Update Failed. Please check connection.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
-    if (effects.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(effects));
-    }
-  }, [effects]);
+    fetchGlobalData();
+  }, []);
 
   const handleLogin = (pass: string) => {
     if (pass === ADMIN_PASS) {
@@ -66,17 +104,27 @@ const App: React.FC = () => {
   }, [effects, searchQuery, sortBy]);
 
   const handleSave = (data: Omit<StatusEffect, 'id' | 'createdAt'> & { id?: string; createdAt?: number }) => {
+    let updated: StatusEffect[];
     if (editorMode === 'create') {
       const newEntry: StatusEffect = {
         ...data,
         id: Date.now().toString(),
         createdAt: Date.now(),
-        imageUrl: data.imageUrl || `/icons/question_mark.png`,
+        imageUrl: data.imageUrl || '',
       };
-      setEffects(prev => [newEntry, ...prev]);
+      updated = [newEntry, ...effects];
     } else {
-      setEffects(prev => prev.map(e => e.id === data.id ? { ...e, ...data } : e));
+      updated = effects.map(e => e.id === data.id ? { ...e, ...data } : e);
     }
+    
+    setEffects(updated);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  };
+
+  const handleDelete = (id: string) => {
+    const updated = effects.filter(item => item.id !== id);
+    setEffects(updated);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   };
 
   return (
@@ -93,8 +141,10 @@ const App: React.FC = () => {
                 ALS <span className="text-rose-600">CODEX</span>
               </h1>
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
-                <p className="text-[9px] uppercase tracking-[0.3em] font-bold text-slate-500">Live Database v3.0</p>
+                <span className={`w-2 h-2 rounded-full animate-pulse ${isSyncing ? 'bg-amber-500' : 'bg-green-500'}`}></span>
+                <p className="text-[9px] uppercase tracking-[0.3em] font-bold text-slate-500">
+                  {isSyncing ? 'Synchronizing Archives...' : 'Global Cloud Link Active'}
+                </p>
               </div>
             </div>
           </div>
@@ -103,24 +153,35 @@ const App: React.FC = () => {
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
             <input 
               type="text"
-              placeholder="Scan for status markers..."
+              placeholder="Scan status markers..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full bg-slate-900/50 border border-slate-800 rounded-full py-3.5 pl-12 pr-6 text-sm focus:outline-none focus:border-rose-600 transition-all placeholder:text-slate-700"
             />
           </div>
 
-          <button 
-            onClick={() => isAdmin ? setIsAdmin(false) : setIsLoginModalOpen(true)}
-            className={`flex items-center gap-2 px-6 py-2.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
-              isAdmin 
-                ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/30' 
-                : 'bg-slate-800 text-slate-500 border border-slate-700 hover:text-slate-300'
-            }`}
-          >
-            {isAdmin ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
-            {isAdmin ? 'ADMIN AUTHENTICATED' : 'ADMIN LOGIN'}
-          </button>
+          <div className="flex items-center gap-3">
+             <button 
+                onClick={fetchGlobalData}
+                disabled={isSyncing}
+                className="p-2.5 bg-slate-800 rounded-full text-slate-400 hover:text-white transition-all hover:bg-slate-700 disabled:opacity-50"
+                title="Refresh from Cloud"
+              >
+                <RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''} />
+              </button>
+
+            <button 
+              onClick={() => isAdmin ? setIsAdmin(false) : setIsLoginModalOpen(true)}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all ${
+                isAdmin 
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-900/30' 
+                  : 'bg-slate-800 text-slate-500 border border-slate-700 hover:text-slate-300'
+              }`}
+            >
+              {isAdmin ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+              {isAdmin ? 'ADMIN AUTHENTICATED' : 'ADMIN LOGIN'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -144,18 +205,43 @@ const App: React.FC = () => {
             
             <div className="hidden sm:flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-slate-600">
               <LayoutGrid size={14} />
-              Results: <span className="text-rose-500">{processedEffects.length}</span>
+              Database Size: <span className="text-rose-500 font-mono">{effects.length} Units</span>
             </div>
           </div>
 
-          {isAdmin && (
-            <button 
-              onClick={() => { setEditorMode('create'); setCurrentEffect(undefined); setIsModalOpen(true); }}
-              className="w-full md:w-auto bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
-            >
-              <Plus size={16} /> New Entry
-            </button>
-          )}
+          <div className="flex gap-4 w-full md:w-auto">
+            {isAdmin && (
+               <button 
+                onClick={() => pushGlobalData(effects)}
+                disabled={isSyncing}
+                className="flex-1 md:w-auto bg-slate-800 border border-rose-600/30 hover:border-rose-600 text-rose-500 px-6 py-3 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <CloudUpload size={16} /> Update Global Server
+              </button>
+            )}
+            
+            {isAdmin && (
+              <button 
+                onClick={() => { setEditorMode('create'); setCurrentEffect(undefined); setIsModalOpen(true); }}
+                className="flex-1 md:w-auto bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] transition-all shadow-lg shadow-rose-900/20 flex items-center justify-center gap-2"
+              >
+                <Plus size={16} /> Add Marker
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Sync Info Header */}
+        <div className="mb-8 flex items-center justify-between px-4">
+           <div className="flex items-center gap-2 text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em]">
+             <Cloud size={14} />
+             <span>Cloud Host: <span className="text-rose-400">npoint.io/{CLOUD_SYNC_ID}</span></span>
+           </div>
+           {lastSynced && (
+             <span className="text-[9px] text-slate-600 uppercase tracking-widest italic">
+               Last Sync: {new Date(lastSynced).toLocaleTimeString()}
+             </span>
+           )}
         </div>
 
         {/* Grid Display */}
@@ -167,7 +253,7 @@ const App: React.FC = () => {
                 effect={effect}
                 isAdmin={isAdmin}
                 onEdit={(e) => { setCurrentEffect(e); setEditorMode('edit'); setIsModalOpen(true); }}
-                onDelete={(id) => setEffects(prev => prev.filter(item => item.id !== id))}
+                onDelete={handleDelete}
               />
             ))}
           </div>
@@ -207,7 +293,7 @@ const App: React.FC = () => {
             <div className="h-[1px] w-20 bg-slate-800"></div>
           </div>
           <p className="heading-font text-[10px] text-slate-700 font-bold uppercase tracking-[0.5em]">
-            ALS DATA SERVICES &copy; MMXXIV
+            ALS GLOBAL CODEX NETWORK &copy; MMXXIV
           </p>
         </div>
       </footer>
@@ -215,4 +301,4 @@ const App: React.FC = () => {
   );
 };
 
-export default App; 
+export default App;
