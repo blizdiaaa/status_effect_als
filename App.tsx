@@ -386,7 +386,7 @@ const App: React.FC = () => {
       <footer className="border-t border-slate-900 bg-slate-950/50 py-16">
         <div className="max-w-7xl mx-auto px-6 flex flex-col items-center">
           <p className="heading-font text-[10px] text-slate-700 font-bold uppercase tracking-[0.5em] text-center leading-loose">
-            Anime Last Stand &bull; Global Codex Network &bull; Shared Intelligence Database
+            Anime Last Stand &bull; Credits : Killua; Credits : Bliz
             <br />
             <span className="text-slate-800">UNAUTHORIZED ACCESS PROHIBITED</span>
           </p>
