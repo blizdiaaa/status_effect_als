@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { StatusEffect } from '../types';
 import { Edit2, Trash2, Zap, ImageOff } from 'lucide-react';
@@ -37,7 +38,9 @@ const StatusCard: React.FC<StatusCardProps> = ({ effect, isAdmin, onEdit, onDele
         <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-rose-500/40 to-transparent animate-[scan_3s_linear_infinite] opacity-0 group-hover:opacity-100"></div>
         
         <div className="absolute bottom-2 right-3">
-          <span className="text-[8px] font-mono text-slate-600 uppercase">Path: {effect.imageUrl.replace('/icons/', '')}</span>
+          <span className="text-[8px] font-mono text-slate-600 uppercase">
+            {effect.imageUrl.startsWith('data:') ? 'Custom Asset' : 'No Asset Linked'}
+          </span>
         </div>
       </div>
 
