@@ -1,0 +1,5 @@
+{
+  "name": "Anime Last Stand: Status Effects Codex",
+  "description": "A premium, game-themed database for Anime Last Stand status effects and Damage over Time (DoT) mechanics, featuring administrative CRUD capabilities and data persistence.",
+  "requestFramePermissions": []
+}
