@@ -32,8 +32,9 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 1024 * 1024) { // 1MB Limit for LocalStorage health
-        alert("Image too large! Please select an image under 1MB.");
+      // 100KB limit recommended for base64 shared bins to avoid overhead
+      if (file.size > 100 * 1024) { 
+        alert("Image too large! Please use a smaller icon (under 100KB) to ensure it syncs across all browsers correctly.");
         return;
       }
       const reader = new FileReader();
@@ -84,7 +85,7 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
           </div>
 
           <div className="space-y-2">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Asset Management</label>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Global Asset Management</label>
             <div className="flex items-center gap-4 p-4 bg-slate-950 border border-slate-800 rounded-xl">
               <div className="w-20 h-20 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center overflow-hidden shrink-0">
                 {formData.imageUrl ? (
@@ -120,7 +121,7 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
               </div>
             </div>
             <p className="text-[9px] text-slate-600 flex items-center gap-1 italic px-1">
-              <Info size={10} /> Supports PNG, JPG, GIF (Max 1MB).
+              <Info size={10} /> Tip: Small PNGs work best for Global Sync.
             </p>
           </div>
 
@@ -148,7 +149,7 @@ const EditorModal: React.FC<EditorModalProps> = ({ isOpen, onClose, onSave, init
               type="submit"
               className="flex-[2] py-4 bg-rose-600 hover:bg-rose-700 text-white font-bold uppercase tracking-widest text-[10px] rounded-xl transition-all shadow-lg shadow-rose-900/20 flex items-center justify-center gap-2"
             >
-              <Save size={14} /> Save Archives
+              <Save size={14} /> Commit Changes
             </button>
           </div>
         </form>
