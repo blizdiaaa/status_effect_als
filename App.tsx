@@ -332,7 +332,10 @@ const App: React.FC = () => {
         <div className="mb-8 flex items-center justify-between px-4">
            <div className="flex items-center gap-2 text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em]">
              <Cloud size={14} />
-             <span>Active Data Source: <span className="text-rose-400/80 font-mono text-[9px]">{dbUrl.slice(0, 45)}...</span></span>
+             <span>Data Sync: <span className="text-rose-400/80">{isOnline ? 'Linked' : 'Offline'}</span></span>
+             {isAdmin && (
+               <span className="ml-2 font-mono text-[9px] text-slate-600">[{dbUrl.slice(0, 30)}...]</span>
+             )}
            </div>
            {lastSynced && (
              <span className="text-[9px] text-slate-600 uppercase tracking-widest italic flex items-center gap-2">
