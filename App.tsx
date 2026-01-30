@@ -1,86 +1,146 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { StatusEffect, EditorMode, SortOption } from './types';
 import { INITIAL_STATUS_EFFECTS } from './constants';
 import StatusCard from './components/StatusCard';
 import EditorModal from './components/EditorModal';
 import AdminLoginModal from './components/AdminLoginModal';
-import { Search, Plus, ShieldCheck, ShieldAlert, Zap, Filter, LayoutGrid, Cloud, CloudUpload, RefreshCw } from 'lucide-react';
+import { 
+  Search, Plus, ShieldCheck, ShieldAlert, Zap, Filter, 
+  LayoutGrid, Cloud, CloudUpload, RefreshCw, Link as LinkIcon,
+  Wifi, WifiOff, Database
+} from 'lucide-react';
 
-const STORAGE_KEY = 'als_codex_database_v3';
+const STORAGE_KEY = 'als_codex_db_v4';
+const CONFIG_KEY = 'als_codex_config';
 const ADMIN_PASS = 'ALS_ADMIN_2024';
-// Public Shared Bin ID for Global Sync (using npoint.io)
-// This is a shared endpoint. Multiple people can read/write if they have the ID.
-const CLOUD_SYNC_ID = '72338b093370321a423e'; 
-const CLOUD_API = `https://api.npoint.io/${CLOUD_SYNC_ID}`;
+
+// User provided Firebase URL
+const DEFAULT_DB_URL = 'https://als-codex-default-rtdb.firebaseio.com/';
 
 const App: React.FC = () => {
   const [effects, setEffects] = useState<StatusEffect[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<SortOption>('newest');
+  
+  // Cloud States
+  const [dbUrl, setDbUrl] = useState<string>(DEFAULT_DB_URL);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState<number | null>(null);
-  
+  const [isOnline, setIsOnline] = useState(false);
+
+  // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>('create');
   const [currentEffect, setCurrentEffect] = useState<StatusEffect | undefined>();
 
-  // Cloud Sync Logic
-  const fetchGlobalData = async () => {
+  // 1. Initial Load from Local & Config
+  useEffect(() => {
+    const savedConfig = localStorage.getItem(CONFIG_KEY);
+    if (savedConfig) {
+      setDbUrl(savedConfig);
+    } else {
+      setDbUrl(DEFAULT_DB_URL);
+    }
+    
+    const savedData = localStorage.getItem(STORAGE_KEY);
+    if (savedData) {
+      setEffects(JSON.parse(savedData));
+    } else {
+      setEffects(INITIAL_STATUS_EFFECTS);
+    }
+  }, []);
+
+  // 2. Cloud Synchronization Engine
+  const syncWithCloud = useCallback(async (targetUrl: string = dbUrl) => {
+    if (!targetUrl) return;
+    
+    // Firebase REST API requires .json at the end of the path
+    const cleanUrl = targetUrl.replace(/\/$/, '') + '/effects.json';
+    
     setIsSyncing(true);
     try {
-      const response = await fetch(CLOUD_API);
+      const response = await fetch(cleanUrl);
       if (response.ok) {
         const data = await response.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setEffects(data);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        if (data) {
+          // Firebase returns objects or arrays depending on how it was saved
+          const formattedData = Array.isArray(data) ? data : Object.values(data);
+          setEffects(formattedData as StatusEffect[]);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(formattedData));
+          setIsOnline(true);
           setLastSynced(Date.now());
         } else {
-          setEffects(INITIAL_STATUS_EFFECTS);
+          // If database is empty (null returned), use initial data or leave as is
+          if (effects.length === 0) setEffects(INITIAL_STATUS_EFFECTS);
+          setIsOnline(true);
         }
       } else {
-        throw new Error('Cloud unreachable');
+        setIsOnline(false);
       }
     } catch (err) {
-      console.warn('Sync failed, falling back to local cache', err);
-      const saved = localStorage.getItem(STORAGE_KEY);
-      setEffects(saved ? JSON.parse(saved) : INITIAL_STATUS_EFFECTS);
+      console.error("Cloud Sync Error:", err);
+      setIsOnline(false);
     } finally {
       setIsSyncing(false);
     }
-  };
+  }, [dbUrl, effects.length]);
 
-  const pushGlobalData = async (data: StatusEffect[]) => {
-    if (!isAdmin) return;
-    setIsSyncing(true);
-    try {
-      await fetch(CLOUD_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      setLastSynced(Date.now());
-    } catch (err) {
-      alert('Cloud Update Failed. Please check connection.');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
+  // 3. Auto-Polling for Global Updates
   useEffect(() => {
-    fetchGlobalData();
-  }, []);
+    if (dbUrl) {
+      syncWithCloud();
+      // Poll every 20 seconds for changes from other users/admins
+      const interval = setInterval(() => syncWithCloud(), 20000); 
+      return () => clearInterval(interval);
+    }
+  }, [dbUrl, syncWithCloud]);
+
+  // 4. Push Updates to Global Cloud (Admin only)
+  const pushToCloud = async (updatedData: StatusEffect[]) => {
+    if (!dbUrl || !isAdmin) return;
+    
+    const cleanUrl = dbUrl.replace(/\/$/, '') + '/effects.json';
+    setIsSyncing(true);
+    
+    try {
+      const response = await fetch(cleanUrl, {
+        method: 'PUT', // Firebase PUT replaces the node with the provided array
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updatedData)
+      });
+      
+      if (response.ok) {
+        setLastSynced(Date.now());
+        setIsOnline(true);
+      } else {
+        throw new Error("Server rejected update");
+      }
+    } catch (err) {
+      console.error("Cloud Push Error:", err);
+      alert("GLOBAL SYNC FAILED: Ensure your Firebase rules allow public read/write or check your internet connection.");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleLogin = (pass: string) => {
     if (pass === ADMIN_PASS) {
       setIsAdmin(true);
       setIsLoginModalOpen(false);
     } else {
-      alert('Access Denied: Invalid Security Passcode');
+      alert('AUTHENTICATION FAILED: Invalid Administrator Passcode');
     }
+  };
+
+  const saveConfig = (url: string) => {
+    setDbUrl(url);
+    localStorage.setItem(CONFIG_KEY, url);
+    syncWithCloud(url);
   };
 
   const processedEffects = useMemo(() => {
@@ -103,7 +163,7 @@ const App: React.FC = () => {
     return result;
   }, [effects, searchQuery, sortBy]);
 
-  const handleSave = (data: Omit<StatusEffect, 'id' | 'createdAt'> & { id?: string; createdAt?: number }) => {
+  const handleSave = async (data: Omit<StatusEffect, 'id' | 'createdAt'> & { id?: string; createdAt?: number }) => {
     let updated: StatusEffect[];
     if (editorMode === 'create') {
       const newEntry: StatusEffect = {
@@ -119,16 +179,26 @@ const App: React.FC = () => {
     
     setEffects(updated);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    
+    if (dbUrl && isAdmin) {
+      await pushToCloud(updated);
+    }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("ARE YOU SURE? THIS WILL PERMANENTLY ERASE THE GLOBAL RECORD.")) return;
+    
     const updated = effects.filter(item => item.id !== id);
     setEffects(updated);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    
+    if (dbUrl && isAdmin) {
+      await pushToCloud(updated);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-200">
+    <div className="min-h-screen bg-[#020617] text-slate-200 selection:bg-rose-600/30">
       {/* Tactical Header */}
       <header className="sticky top-0 z-50 bg-slate-950/80 backdrop-blur-xl border-b border-slate-800 shadow-2xl">
         <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-6">
@@ -141,10 +211,14 @@ const App: React.FC = () => {
                 ALS <span className="text-rose-600">CODEX</span>
               </h1>
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full animate-pulse ${isSyncing ? 'bg-amber-500' : 'bg-green-500'}`}></span>
-                <p className="text-[9px] uppercase tracking-[0.3em] font-bold text-slate-500">
-                  {isSyncing ? 'Synchronizing Archives...' : 'Global Cloud Link Active'}
-                </p>
+                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[8px] font-bold tracking-widest uppercase transition-all ${
+                  isOnline 
+                    ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400' 
+                    : 'bg-slate-800 border-slate-700 text-slate-500'
+                }`}>
+                  {isOnline ? <Wifi size={10} /> : <WifiOff size={10} />}
+                  {isOnline ? 'Network: Online' : 'Network: Standalone'}
+                </div>
               </div>
             </div>
           </div>
@@ -153,7 +227,7 @@ const App: React.FC = () => {
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
             <input 
               type="text"
-              placeholder="Scan status markers..."
+              placeholder="Query Archives..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full bg-slate-900/50 border border-slate-800 rounded-full py-3.5 pl-12 pr-6 text-sm focus:outline-none focus:border-rose-600 transition-all placeholder:text-slate-700"
@@ -162,10 +236,10 @@ const App: React.FC = () => {
 
           <div className="flex items-center gap-3">
              <button 
-                onClick={fetchGlobalData}
+                onClick={() => syncWithCloud()}
                 disabled={isSyncing}
+                title="Force Cloud Refresh"
                 className="p-2.5 bg-slate-800 rounded-full text-slate-400 hover:text-white transition-all hover:bg-slate-700 disabled:opacity-50"
-                title="Refresh from Cloud"
               >
                 <RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''} />
               </button>
@@ -179,15 +253,48 @@ const App: React.FC = () => {
               }`}
             >
               {isAdmin ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
-              {isAdmin ? 'ADMIN AUTHENTICATED' : 'ADMIN LOGIN'}
+              {isAdmin ? 'SYSTEM ADMIN' : 'ADMIN LOGIN'}
             </button>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 pt-12 pb-24">
+        
+        {/* Admin Cloud Config Panel */}
+        {isAdmin && (
+          <div className="mb-12 bg-slate-900/50 border border-rose-600/20 rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-500">
+            <div className="bg-rose-600/10 px-6 py-3 border-b border-rose-600/20 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-rose-500">
+                <Database size={16} />
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Synchronization Terminal</span>
+              </div>
+              <div className="text-[9px] text-slate-500 uppercase font-mono">Status: {isOnline ? 'GLOBAL_LINK_ACTIVE' : 'LOCAL_REDUNDANCY'}</div>
+            </div>
+            <div className="p-6 flex flex-col md:flex-row gap-4">
+              <div className="flex-1 relative">
+                <LinkIcon size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" />
+                <input 
+                  type="text"
+                  placeholder="Firebase Endpoint URL..."
+                  value={dbUrl}
+                  onChange={e => saveConfig(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl py-3 pl-11 pr-4 text-xs font-mono text-rose-400 focus:outline-none focus:border-rose-600 transition-all"
+                />
+              </div>
+              <button 
+                onClick={() => pushToCloud(effects)}
+                disabled={!dbUrl || isSyncing}
+                className="bg-slate-800 hover:bg-rose-600 text-white px-6 py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 disabled:opacity-30"
+              >
+                <CloudUpload size={16} /> Deploy to Global Cloud
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Controls Bar */}
-        <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-12 bg-slate-900/30 p-6 rounded-2xl border border-slate-800/50">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-8 bg-slate-900/30 p-6 rounded-2xl border border-slate-800/50">
           <div className="flex items-center gap-8">
             <div className="flex items-center gap-3">
               <Filter size={14} className="text-rose-500" />
@@ -196,8 +303,8 @@ const App: React.FC = () => {
                 onChange={e => setSortBy(e.target.value as SortOption)}
                 className="bg-transparent border-none text-[11px] font-bold uppercase tracking-widest text-slate-400 focus:outline-none cursor-pointer hover:text-white transition-colors"
               >
-                <option value="newest">Newest First</option>
-                <option value="oldest">Oldest First</option>
+                <option value="newest">Latest Records</option>
+                <option value="oldest">Legacy Records</option>
                 <option value="name-asc">Alphabetical A-Z</option>
                 <option value="name-desc">Alphabetical Z-A</option>
               </select>
@@ -205,41 +312,32 @@ const App: React.FC = () => {
             
             <div className="hidden sm:flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-slate-600">
               <LayoutGrid size={14} />
-              Database Size: <span className="text-rose-500 font-mono">{effects.length} Units</span>
+              Codex Index: <span className="text-rose-500">{effects.length} Effects</span>
             </div>
           </div>
 
           <div className="flex gap-4 w-full md:w-auto">
             {isAdmin && (
-               <button 
-                onClick={() => pushGlobalData(effects)}
-                disabled={isSyncing}
-                className="flex-1 md:w-auto bg-slate-800 border border-rose-600/30 hover:border-rose-600 text-rose-500 px-6 py-3 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                <CloudUpload size={16} /> Update Global Server
-              </button>
-            )}
-            
-            {isAdmin && (
               <button 
                 onClick={() => { setEditorMode('create'); setCurrentEffect(undefined); setIsModalOpen(true); }}
                 className="flex-1 md:w-auto bg-rose-600 hover:bg-rose-500 text-white px-8 py-3 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] transition-all shadow-lg shadow-rose-900/20 flex items-center justify-center gap-2"
               >
-                <Plus size={16} /> Add Marker
+                <Plus size={16} /> New Marker
               </button>
             )}
           </div>
         </div>
 
-        {/* Sync Info Header */}
+        {/* Sync Status Info */}
         <div className="mb-8 flex items-center justify-between px-4">
            <div className="flex items-center gap-2 text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em]">
              <Cloud size={14} />
-             <span>Cloud Host: <span className="text-rose-400">npoint.io/{CLOUD_SYNC_ID}</span></span>
+             <span>Active Data Source: <span className="text-rose-400/80 font-mono text-[9px]">{dbUrl.slice(0, 45)}...</span></span>
            </div>
            {lastSynced && (
-             <span className="text-[9px] text-slate-600 uppercase tracking-widest italic">
-               Last Sync: {new Date(lastSynced).toLocaleTimeString()}
+             <span className="text-[9px] text-slate-600 uppercase tracking-widest italic flex items-center gap-2">
+               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+               Last Pulse: {new Date(lastSynced).toLocaleTimeString()}
              </span>
            )}
         </div>
@@ -259,12 +357,9 @@ const App: React.FC = () => {
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-40 bg-slate-900/10 border-2 border-dashed border-slate-800/50 rounded-3xl">
-            <div className="relative mb-6">
-              <Search size={64} className="text-slate-800" />
-              <div className="absolute inset-0 animate-ping bg-rose-600/5 rounded-full"></div>
-            </div>
-            <h3 className="heading-font text-slate-600 uppercase tracking-[0.3em] font-bold">No Records Found</h3>
-            <p className="text-slate-700 text-xs mt-2 uppercase tracking-widest">Database return null for current query</p>
+            <RefreshCw size={64} className="text-slate-800 mb-6 animate-spin-slow" />
+            <h3 className="heading-font text-slate-600 uppercase tracking-[0.3em] font-bold">Connecting to Hive...</h3>
+            <p className="text-slate-700 text-xs mt-2 uppercase tracking-widest">Initial global handshake in progress</p>
           </div>
         )}
       </main>
@@ -287,16 +382,23 @@ const App: React.FC = () => {
       {/* Footer Branding */}
       <footer className="border-t border-slate-900 bg-slate-950/50 py-16">
         <div className="max-w-7xl mx-auto px-6 flex flex-col items-center">
-          <div className="flex items-center gap-4 mb-6 opacity-30">
-            <div className="h-[1px] w-20 bg-slate-800"></div>
-            <Zap size={16} className="text-rose-600" />
-            <div className="h-[1px] w-20 bg-slate-800"></div>
-          </div>
-          <p className="heading-font text-[10px] text-slate-700 font-bold uppercase tracking-[0.5em]">
-            ALS GLOBAL CODEX NETWORK &copy; MMXXIV
+          <p className="heading-font text-[10px] text-slate-700 font-bold uppercase tracking-[0.5em] text-center leading-loose">
+            Anime Last Stand &bull; Global Codex Network &bull; Shared Intelligence Database
+            <br />
+            <span className="text-slate-800">UNAUTHORIZED ACCESS PROHIBITED</span>
           </p>
         </div>
       </footer>
+
+      <style>{`
+        .animate-spin-slow {
+          animation: spin 8s linear infinite;
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 };
